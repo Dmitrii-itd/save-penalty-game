@@ -3,19 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Сэйв: Пенальти (горизонтальный)</title>
+    <title>Сэйв: Пенальти (реальная сложность)</title>
     <style>
         body { font-family: Arial, sans-serif; background: #0a0a0f; color: white; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         #balance { font-size: 24px; margin: 10px; color: #00f0ff; }
         button, select { background: #ff0055; border: none; color: white; padding: 12px 25px; font-size: 16px; border-radius: 8px; cursor: pointer; margin: 5px; }
         button:disabled, select:disabled { background: #555; cursor: not-allowed; }
         #field { position: relative; width: 400px; height: 250px; background: #1a1a2e; border: 2px solid #00f0ff; margin: 20px auto; overflow: hidden; user-select: none; }
-        .sector { position: absolute; border: 1px solid rgba(255,255,255,0.3); transition: background 0.1s; }
-        .sector.highlight { background: rgba(255, 0, 100, 0.7); border-color: #ff0; transform: scale(1.02); z-index: 2; }
+        .sector { position: absolute; border: 1px solid rgba(255,255,255,0.3); transition: background 0.1s; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.5); font-size: 12px; }
+        .sector.highlight { background: rgba(255, 0, 100, 0.8); border: 2px solid #ff0; z-index: 2; transform: scale(1.02); }
+        #clickMarker { position: absolute; width: 10px; height: 10px; background: #0f0; border-radius: 50%; pointer-events: none; display: none; z-index: 10; }
         #message { margin-top: 10px; font-size: 20px; color: #ff0; min-height: 30px; }
         #result { margin-top: 10px; font-size: 16px; color: #ccc; white-space: pre-line; }
         #controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
         select { background: #333; }
+        #debug { color: #aaa; font-size: 14px; min-height: 20px; }
     </style>
 </head>
 <body>
@@ -33,7 +35,10 @@
         <button id="playBtn" onclick="startAttempt(false)">Играть на деньги</button>
         <button id="trainBtn" onclick="startAttempt(true)">Тренировка (бесплатно)</button>
     </div>
-    <div id="field"></div>
+    <div id="field">
+        <div id="clickMarker"></div>
+    </div>
+    <div id="debug"></div>
     <div id="message"></div>
     <div id="result"></div>
 
@@ -45,6 +50,7 @@
         let attemptActive = false;
         let clickResult = [];
         let isTraining = false;
+        const REACTION_WINDOW_MS = 500; // окно реакции
 
         async function fetchBalance() {
             const resp = await fetch('/api/balance');
@@ -112,6 +118,7 @@
             clickResult = [];
             document.getElementById('message').textContent = '';
             document.getElementById('result').textContent = '';
+            document.getElementById('debug').textContent = '';
             startShot();
         }
 
@@ -123,11 +130,16 @@
             const shot = currentTrack[currentShot];
             const sector = shot.sector;
             const promptTime = shot.prompt_time * 1000;
+            document.getElementById('debug').textContent = `Удар ${currentShot+1}: ждём подсветки...`;
+
             setTimeout(() => {
                 if (!attemptActive) return;
                 highlightSector(sector);
+                document.getElementById('debug').textContent = `Удар ${currentShot+1}: бей в сектор ${sector}!`;
                 const startTime = Date.now();
                 const field = document.getElementById('field');
+                const marker = document.getElementById('clickMarker');
+
                 const clickHandler = function(e) {
                     if (!attemptActive) return;
                     const rect = field.getBoundingClientRect();
@@ -135,26 +147,41 @@
                     const y = e.clientY - rect.top;
                     const clickedSector = getSectorFromCoords(x, y, rect.width, rect.height);
                     const reactionTime = Date.now() - startTime;
+
+                    // Показать точку клика
+                    marker.style.left = x + 'px';
+                    marker.style.top = y + 'px';
+                    marker.style.display = 'block';
+                    setTimeout(() => marker.style.display = 'none', 200);
+
+                    console.log(`Клик: (${Math.round(x)}, ${Math.round(y)}), сектор=${clickedSector}, ожидался=${sector}, реакция=${reactionTime}мс`);
+                    document.getElementById('debug').textContent = `Вы кликнули в сектор ${clickedSector}`;
+
                     clickResult.push({
                         sector_clicked: clickedSector,
                         reaction_time_ms: reactionTime,
                         correct_sector: sector
                     });
+
                     clearHighlight();
                     field.removeEventListener('click', clickHandler);
                     currentShot++;
                     setTimeout(startShot, 500);
                 };
+
                 field.addEventListener('click', clickHandler);
+
+                // Автоматический промах по истечении окна
                 setTimeout(() => {
                     if (attemptActive && clickResult.length === currentShot) {
                         clickResult.push({
                             sector_clicked: -1,
-                            reaction_time_ms: 1000,
+                            reaction_time_ms: REACTION_WINDOW_MS,
                             correct_sector: sector
                         });
                         clearHighlight();
                         field.removeEventListener('click', clickHandler);
+                        document.getElementById('debug').textContent = 'Промах: время вышло';
                         currentShot++;
                         setTimeout(startShot, 500);
                     }
@@ -185,9 +212,10 @@
         async function endAttempt() {
             attemptActive = false;
             updateButtons();
+            document.getElementById('debug').textContent = '';
 
             if (isTraining) {
-                const saved = clickResult.filter(r => r.sector_clicked === r.correct_sector && r.reaction_time_ms >= 100).length;
+                const saved = clickResult.filter(r => r.sector_clicked === r.correct_sector).length;
                 document.getElementById('message').textContent = `Тренировка: отбито ${saved}/5`;
                 document.getElementById('result').textContent = formatResult(clickResult);
                 return;
@@ -213,10 +241,12 @@
         }
 
         function formatResult(results) {
+            const dirs = ['левый верх','центр верх','правый верх','левый центр','центр','правый центр','левый низ','центр низ','правый низ'];
             let text = 'Детали ударов:\n';
             results.forEach((r, i) => {
-                const hit = r.sector_clicked === r.correct_sector && r.reaction_time_ms >= 100;
-                text += `Удар ${i+1}: ${hit ? '✅ Отбит' : '❌ Пропущен'} (сектор ${r.correct_sector}, реакция ${r.reaction_time_ms} мс)\n`;
+                const dir = dirs[r.correct_sector] || 'неизв.';
+                const hit = r.sector_clicked === r.correct_sector;
+                text += `Удар ${i+1}: ${hit ? '✅ Отбит' : '❌ Пропущен'} (${dir}, реакция ${r.reaction_time_ms}мс)\n`;
             });
             return text;
         }
@@ -233,7 +263,9 @@
                     div.style.top = row * h + 'px';
                     div.style.width = w + 'px';
                     div.style.height = h + 'px';
-                    div.dataset.sector = row * 3 + col;
+                    const idx = row * 3 + col;
+                    div.dataset.sector = idx;
+                    div.textContent = idx; // номер сектора для отладки
                     field.appendChild(div);
                 }
             }
@@ -243,9 +275,6 @@
             createField();
             fetchBalance();
         };
-
-        // экспортируем константу для использования в setTimeout
-        const REACTION_WINDOW_MS = 400;
     </script>
 </body>
 </html>
