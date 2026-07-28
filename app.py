@@ -1,33 +1,28 @@
 import json
 import random
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify, session
 
 app = Flask(__name__)
 app.secret_key = 'super-secret-key-change-in-production'
 
-# Глобальное хранилище (для прототипа, в продакшене — БД)
 daily_track = []
 last_track_date = None
-user_balance = {}  # ключ - session id, значение - баланс в рублях
-attempts_today = {}  # количество попыток пользователя сегодня
+user_balance = {}
+attempts_today = {}
 
-# Настройки
-BASE_PRICE = 100  # базовая цена попытки
+BASE_PRICE = 100
 PRIZES = {5: 316, 4: 134, 3: 60, 2: 0, 1: 0, 0: 0}
-REACTION_WINDOW_MS = 300  # окно появления подсказки до удара
-MIN_REACTION_TIME = 100   # минимальное физиологическое время реакции, мс
+REACTION_WINDOW_MS = 400  # настройка сложности
+MIN_REACTION_TIME = 100
 
 def generate_daily_track():
-    """Генерирует трассу дня (5 ударов). Для простоты сектора: 0-верх-лево, 1-верх-центр, 2-верх-право,
-    3-середина-лево, 4-середина-центр, 5-середина-право, 6-низ-лево, 7-низ-центр, 8-низ-право."""
     track = []
     for _ in range(5):
         sector = random.randint(0, 8)
         track.append({
             "sector": sector,
-            "prompt_time": random.uniform(0.5, 1.5)  # секунд от начала раунда, когда загорается подсказка
+            "prompt_time": random.uniform(0.5, 1.5)
         })
     return track
 
@@ -65,7 +60,12 @@ def deposit():
     if amount < 300:
         return jsonify({"error": "Минимальное пополнение 300 руб."}), 400
     user_balance[uid] += amount
-    return jsonify({"balance": user_balance[uid], "message": f"Счёт пополнен на {amount} руб."})
+    return jsonify({"balance": user_balance[uid]})
+
+@app.route('/api/training', methods=['GET'])
+def training():
+    track = get_track()
+    return jsonify({"track": track})
 
 @app.route('/api/attempt', methods=['POST'])
 def make_attempt():
@@ -76,12 +76,10 @@ def make_attempt():
     if user_balance[uid] < stake:
         return jsonify({"error": "Недостаточно средств"}), 402
     if attempts_today[uid] >= 20:
-        return jsonify({"error": "Достигнут лимит попыток на сегодня"}), 429
+        return jsonify({"error": "Лимит попыток на сегодня исчерпан"}), 429
 
-    # Списание
     user_balance[uid] -= stake
     attempts_today[uid] += 1
-
     track = get_track()
     return jsonify({
         "message": "Попытка начата",
@@ -107,7 +105,6 @@ def submit_result():
     base_prize = PRIZES.get(saved, 0)
     multiplier = stake / BASE_PRICE
     prize = int(base_prize * multiplier)
-
     user_balance[uid] += prize
     return jsonify({
         "saved": saved,
