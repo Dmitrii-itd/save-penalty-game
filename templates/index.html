@@ -9,8 +9,8 @@
         #balance { font-size: 24px; margin: 10px; color: #00f0ff; }
         button, select { background: #ff0055; border: none; color: white; padding: 12px 25px; font-size: 16px; border-radius: 8px; cursor: pointer; margin: 5px; }
         button:disabled, select:disabled { background: #555; cursor: not-allowed; }
-        #field { position: relative; width: 400px; height: 250px; background: #1a1a2e; border: 2px solid #00f0ff; margin: 20px auto; overflow: hidden; user-select: none; }
-        .sector { position: absolute; border: 1px solid rgba(255,255,255,0.3); transition: background 0.1s; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.5); font-size: 12px; }
+        #field { position: relative; width: 400px; height: 250px; background: #1a1a2e; border: 2px solid #00f0ff; margin: 20px auto; overflow: hidden; user-select: none; touch-action: none; }
+        .sector { position: absolute; border: 1px solid rgba(255,255,255,0.3); transition: background 0.1s; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.5); font-size: 12px; pointer-events: none; }
         .sector.highlight { background: rgba(255, 0, 100, 0.8); border: 2px solid #ff0; z-index: 2; transform: scale(1.02); }
         #clickMarker { position: absolute; width: 10px; height: 10px; background: #0f0; border-radius: 50%; pointer-events: none; display: none; z-index: 10; }
         #message { margin-top: 10px; font-size: 20px; color: #ff0; min-height: 30px; }
@@ -50,7 +50,7 @@
         let attemptActive = false;
         let clickResult = [];
         let isTraining = false;
-        const REACTION_WINDOW_MS = 500; // окно реакции
+        const REACTION_WINDOW_MS = 500;
 
         async function fetchBalance() {
             const resp = await fetch('/api/balance');
@@ -140,22 +140,25 @@
                 const field = document.getElementById('field');
                 const marker = document.getElementById('clickMarker');
 
-                const clickHandler = function(e) {
+                const pointerHandler = function(e) {
                     if (!attemptActive) return;
+                    e.preventDefault();  // убираем возможное выделение, перетаскивание
+                    e.stopPropagation();
+
                     const rect = field.getBoundingClientRect();
                     const x = e.clientX - rect.left;
                     const y = e.clientY - rect.top;
                     const clickedSector = getSectorFromCoords(x, y, rect.width, rect.height);
                     const reactionTime = Date.now() - startTime;
 
-                    // Показать точку клика
+                    // Показать точку касания
                     marker.style.left = x + 'px';
                     marker.style.top = y + 'px';
                     marker.style.display = 'block';
                     setTimeout(() => marker.style.display = 'none', 200);
 
-                    console.log(`Клик: (${Math.round(x)}, ${Math.round(y)}), сектор=${clickedSector}, ожидался=${sector}, реакция=${reactionTime}мс`);
-                    document.getElementById('debug').textContent = `Вы кликнули в сектор ${clickedSector}`;
+                    console.log(`Касание: (${Math.round(x)}, ${Math.round(y)}), сектор=${clickedSector}, ожидался=${sector}, реакция=${reactionTime}мс`);
+                    document.getElementById('debug').textContent = `Вы попали в сектор ${clickedSector}`;
 
                     clickResult.push({
                         sector_clicked: clickedSector,
@@ -164,14 +167,14 @@
                     });
 
                     clearHighlight();
-                    field.removeEventListener('click', clickHandler);
+                    field.removeEventListener('pointerdown', pointerHandler);
                     currentShot++;
                     setTimeout(startShot, 500);
                 };
 
-                field.addEventListener('click', clickHandler);
+                field.addEventListener('pointerdown', pointerHandler);
 
-                // Автоматический промах по истечении окна
+                // Автопромах при истечении времени
                 setTimeout(() => {
                     if (attemptActive && clickResult.length === currentShot) {
                         clickResult.push({
@@ -180,7 +183,7 @@
                             correct_sector: sector
                         });
                         clearHighlight();
-                        field.removeEventListener('click', clickHandler);
+                        field.removeEventListener('pointerdown', pointerHandler);
                         document.getElementById('debug').textContent = 'Промах: время вышло';
                         currentShot++;
                         setTimeout(startShot, 500);
@@ -265,7 +268,7 @@
                     div.style.height = h + 'px';
                     const idx = row * 3 + col;
                     div.dataset.sector = idx;
-                    div.textContent = idx; // номер сектора для отладки
+                    div.textContent = idx;
                     field.appendChild(div);
                 }
             }
