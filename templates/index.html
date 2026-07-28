@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Сэйв: Пенальти (реальная сложность)</title>
+    <title>Сэйв: Пенальти (фикс касаний)</title>
     <style>
         body { font-family: Arial, sans-serif; background: #0a0a0f; color: white; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         #balance { font-size: 24px; margin: 10px; color: #00f0ff; }
@@ -132,26 +132,45 @@
             const promptTime = shot.prompt_time * 1000;
             document.getElementById('debug').textContent = `Удар ${currentShot+1}: ждём подсветки...`;
 
+            let shotHandled = false; // для предотвращения повторной обработки
+
             setTimeout(() => {
-                if (!attemptActive) return;
+                if (!attemptActive || shotHandled) return;
                 highlightSector(sector);
                 document.getElementById('debug').textContent = `Удар ${currentShot+1}: бей в сектор ${sector}!`;
                 const startTime = Date.now();
                 const field = document.getElementById('field');
                 const marker = document.getElementById('clickMarker');
 
-                const pointerHandler = function(e) {
-                    if (!attemptActive) return;
-                    e.preventDefault();  // убираем возможное выделение, перетаскивание
+                // Единый обработчик для mousedown и touchstart
+                const handleInput = function(e) {
+                    // Немедленно удаляем все слушатели, чтобы предотвратить двойное срабатывание
+                    field.removeEventListener('mousedown', handleInput);
+                    field.removeEventListener('touchstart', handleInput);
+
+                    if (!attemptActive || shotHandled) return;
+                    e.preventDefault();
                     e.stopPropagation();
+                    shotHandled = true;
+
+                    let clientX, clientY;
+                    if (e.touches) {
+                        // touch событие
+                        clientX = e.touches[0].clientX;
+                        clientY = e.touches[0].clientY;
+                    } else {
+                        // mouse событие
+                        clientX = e.clientX;
+                        clientY = e.clientY;
+                    }
 
                     const rect = field.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
+                    const x = clientX - rect.left;
+                    const y = clientY - rect.top;
                     const clickedSector = getSectorFromCoords(x, y, rect.width, rect.height);
                     const reactionTime = Date.now() - startTime;
 
-                    // Показать точку касания
+                    // Визуализация касания
                     marker.style.left = x + 'px';
                     marker.style.top = y + 'px';
                     marker.style.display = 'block';
@@ -167,23 +186,25 @@
                     });
 
                     clearHighlight();
-                    field.removeEventListener('pointerdown', pointerHandler);
                     currentShot++;
                     setTimeout(startShot, 500);
                 };
 
-                field.addEventListener('pointerdown', pointerHandler);
+                field.addEventListener('mousedown', handleInput);
+                field.addEventListener('touchstart', handleInput, {passive: false});
 
-                // Автопромах при истечении времени
+                // Автопромах, если время вышло
                 setTimeout(() => {
-                    if (attemptActive && clickResult.length === currentShot) {
+                    if (attemptActive && !shotHandled && clickResult.length === currentShot) {
+                        shotHandled = true;
+                        field.removeEventListener('mousedown', handleInput);
+                        field.removeEventListener('touchstart', handleInput);
                         clickResult.push({
                             sector_clicked: -1,
                             reaction_time_ms: REACTION_WINDOW_MS,
                             correct_sector: sector
                         });
                         clearHighlight();
-                        field.removeEventListener('pointerdown', pointerHandler);
                         document.getElementById('debug').textContent = 'Промах: время вышло';
                         currentShot++;
                         setTimeout(startShot, 500);
