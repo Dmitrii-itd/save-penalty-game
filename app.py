@@ -13,13 +13,11 @@ attempts_today = {}
 
 BASE_PRICE = 100
 PRIZES = {5: 316, 4: 134, 3: 60, 2: 0, 1: 0, 0: 0}
-REACTION_WINDOW_MS = 400  # настройка сложности
-MIN_REACTION_TIME = 100
 
 def generate_daily_track():
     track = []
     for _ in range(5):
-        sector = random.randint(0, 8)
+        sector = random.randint(0, 8)  # 0-8: 9 секторов
         track.append({
             "sector": sector,
             "prompt_time": random.uniform(0.5, 1.5)
@@ -99,7 +97,8 @@ def submit_result():
 
     saved = 0
     for res in results:
-        if res['sector_clicked'] == res['correct_sector'] and res['reaction_time_ms'] >= MIN_REACTION_TIME:
+        # Временно без проверки минимального времени, чтобы исключить ложные промахи
+        if res['sector_clicked'] == res['correct_sector']:
             saved += 1
 
     base_prize = PRIZES.get(saved, 0)
