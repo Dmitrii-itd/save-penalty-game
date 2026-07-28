@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Сэйв: Пенальти (прототип)</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0a0a0f; color: white; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        #balance { font-size: 24px; margin: 10px; color: #00f0ff; }
+        button { background: #ff0055; border: none; color: white; padding: 15px 30px; font-size: 18px; border-radius: 8px; cursor: pointer; margin: 5px; }
+        button:disabled { background: #555; }
+        #field { position: relative; width: 300px; height: 400px; background: #1a1a2e; border: 2px solid #00f0ff; margin: 20px auto; overflow: hidden; }
+        .sector { position: absolute; border: 1px dashed rgba(255,255,255,0.2); }
+        .highlight { background: rgba(255, 0, 100, 0.5); }
+        #ball { position: absolute; width: 20px; height: 20px; background: white; border-radius: 50%; transition: transform 0.5s linear; }
+        #message { margin-top: 10px; font-size: 20px; color: #ff0; }
+    </style>
+</head>
+<body>
+    <h1>⚽ Сэйв: Пенальти</h1>
+    <div id="balance">Баланс: <span id="bal">0</span> ₽</div>
+    <button onclick="deposit()">Пополнить на 1000 ₽ (тест)</button>
+    <button id="playBtn" onclick="startAttempt()" disabled>Купить попытку (100 ₽)</button>
+    <div id="field">
+        <!-- 9 секторов будут сгенерированы JS -->
+    </div>
+    <div id="message"></div>
+    <div id="result"></div>
+
+    <script>
+        let balance = 0;
+        let currentTrack = null;
+        let currentStake = 100;
+        let currentShot = 0;
+        let attemptActive = false;
+        let clickResult = []; // массив результатов для отправки
+        let timer = null;
+
+        // Обновить баланс с сервера
+        async function fetchBalance() {
+            const resp = await fetch('/api/balance');
+            const data = await resp.json();
+            balance = data.balance;
+            document.getElementById('bal').textContent = balance;
+            document.getElementById('playBtn').disabled = balance < 100;
+        }
+
+        async function deposit() {
+            await fetch('/api/deposit', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({amount: 1000})
+            });
+            fetchBalance();
+        }
+
+        async function startAttempt() {
+            if (balance < currentStake) return alert('Недостаточно средств');
+            const resp = await fetch('/api/attempt', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({stake: currentStake})
+            });
+            const data = await resp.json();
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            currentTrack = data.track;
+            balance = data.balance;
+            document.getElementById('bal').textContent = balance;
+            document.getElementById('playBtn').disabled = true;
+            attemptActive = true;
+            currentShot = 0;
+            clickResult = [];
+            document.getElementById('message').textContent = '';
+            document.getElementById('result').textContent = '';
+            startShot();
+        }
+
+        function startShot() {
+            if (currentShot >= 5) {
+                endAttempt();
+                return;
+            }
+            const shot = currentTrack[currentShot];
+            const sector = shot.sector;
+            const promptTime = shot.prompt_time * 1000; // в миллисекундах
+            // Подсвечиваем сектор через promptTime и держим 300 мс
+            setTimeout(() => {
+                if (!attemptActive) return;
+                highlightSector(sector);
+                // Запускаем таймер реакции: игрок должен кликнуть за 300 мс
+                const startTime = Date.now();
+                // Обработчик клика на поле
+                const field = document.getElementById('field');
+                const clickHandler = function(e) {
+                    if (!attemptActive) return;
+                    const rect = field.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const clickedSector = getSectorFromCoords(x, y, rect.width, rect.height);
+                    const reactionTime = Date.now() - startTime;
+                    // Проверка
+                    const correct = clickedSector === sector && reactionTime >= 100;
+                    clickResult.push({
+                        sector_clicked: clickedSector,
+                        reaction_time_ms: reactionTime,
+                        correct_sector: sector
+                    });
+                    clearHighlight();
+                    field.removeEventListener('click', clickHandler);
+                    currentShot++;
+                    // Задержка перед следующим ударом
+                    setTimeout(startShot, 500);
+                };
+                field.addEventListener('click', clickHandler);
+                // Если не кликнул за 300 мс, автофиксация промаха
+                setTimeout(() => {
+                    if (attemptActive && clickResult.length === currentShot) {
+                        // Не кликнули вовремя
+                        clickResult.push({
+                            sector_clicked: -1,
+                            reaction_time_ms: 1000,
+                            correct_sector: sector
+                        });
+                        clearHighlight();
+                        field.removeEventListener('click', clickHandler);
+                        currentShot++;
+                        setTimeout(startShot, 500);
+                    }
+                }, 300);
+            }, promptTime);
+        }
+
+        function highlightSector(sector) {
+            const sectors = document.querySelectorAll('.sector');
+            sectors.forEach(s => s.classList.remove('highlight'));
+            if (sector >=0 && sector < 9) {
+                sectors[sector].classList.add('highlight');
+            }
+        }
+
+        function clearHighlight() {
+            const sectors = document.querySelectorAll('.sector');
+            sectors.forEach(s => s.classList.remove('highlight'));
+        }
+
+        function getSectorFromCoords(x, y, width, height) {
+            // Сетка 3x3
+            const col = Math.floor(x / (width / 3));
+            const row = Math.floor(y / (height / 3));
+            if (col < 0 || col > 2 || row < 0 || row > 2) return -1;
+            return row * 3 + col;
+        }
+
+        async function endAttempt() {
+            attemptActive = false;
+            // Отправляем результаты на сервер
+            const resp = await fetch('/api/submit_result', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    stake: currentStake,
+                    results: clickResult
+                })
+            });
+            const data = await resp.json();
+            if (data.error) {
+                document.getElementById('result').textContent = 'Ошибка: ' + data.error;
+            } else {
+                balance = data.balance;
+                document.getElementById('bal').textContent = balance;
+                document.getElementById('message').textContent = data.message;
+            }
+            document.getElementById('playBtn').disabled = balance < 100;
+        }
+
+        // Генерация поля с секторами
+        function createField() {
+            const field = document.getElementById('field');
+            const w = field.clientWidth / 3;
+            const h = field.clientHeight / 3;
+            for (let row = 0; row < 3; row++) {
+                for (let col = 0; col < 3; col++) {
+                    const div = document.createElement('div');
+                    div.className = 'sector';
+                    div.style.left = col * w + 'px';
+                    div.style.top = row * h + 'px';
+                    div.style.width = w + 'px';
+                    div.style.height = h + 'px';
+                    div.dataset.sector = row * 3 + col;
+                    field.appendChild(div);
+                }
+            }
+        }
+
+        window.onload = () => {
+            createField();
+            fetchBalance();
+        };
+    </script>
+</body>
+</html>
