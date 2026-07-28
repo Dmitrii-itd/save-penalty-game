@@ -3,27 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Сэйв: Пенальти (прототип)</title>
+    <title>Сэйв: Пенальти (горизонтальный)</title>
     <style>
         body { font-family: Arial, sans-serif; background: #0a0a0f; color: white; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         #balance { font-size: 24px; margin: 10px; color: #00f0ff; }
-        button { background: #ff0055; border: none; color: white; padding: 15px 30px; font-size: 18px; border-radius: 8px; cursor: pointer; margin: 5px; }
-        button:disabled { background: #555; }
-        #field { position: relative; width: 300px; height: 400px; background: #1a1a2e; border: 2px solid #00f0ff; margin: 20px auto; overflow: hidden; }
-        .sector { position: absolute; border: 1px dashed rgba(255,255,255,0.2); }
-        .highlight { background: rgba(255, 0, 100, 0.5); }
-        #ball { position: absolute; width: 20px; height: 20px; background: white; border-radius: 50%; transition: transform 0.5s linear; }
-        #message { margin-top: 10px; font-size: 20px; color: #ff0; }
+        button, select { background: #ff0055; border: none; color: white; padding: 12px 25px; font-size: 16px; border-radius: 8px; cursor: pointer; margin: 5px; }
+        button:disabled, select:disabled { background: #555; cursor: not-allowed; }
+        #field { position: relative; width: 400px; height: 250px; background: #1a1a2e; border: 2px solid #00f0ff; margin: 20px auto; overflow: hidden; user-select: none; }
+        .sector { position: absolute; border: 1px solid rgba(255,255,255,0.3); transition: background 0.1s; }
+        .sector.highlight { background: rgba(255, 0, 100, 0.7); border-color: #ff0; transform: scale(1.02); z-index: 2; }
+        #message { margin-top: 10px; font-size: 20px; color: #ff0; min-height: 30px; }
+        #result { margin-top: 10px; font-size: 16px; color: #ccc; white-space: pre-line; }
+        #controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+        select { background: #333; }
     </style>
 </head>
 <body>
     <h1>⚽ Сэйв: Пенальти</h1>
     <div id="balance">Баланс: <span id="bal">0</span> ₽</div>
-    <button onclick="deposit()">Пополнить на 1000 ₽ (тест)</button>
-    <button id="playBtn" onclick="startAttempt()" disabled>Купить попытку (100 ₽)</button>
-    <div id="field">
-        <!-- 9 секторов будут сгенерированы JS -->
+    <div id="controls">
+        <button onclick="deposit()">Пополнить на 1000 ₽</button>
+        <label for="stakeSelect">Ставка:</label>
+        <select id="stakeSelect">
+            <option value="100">100 ₽</option>
+            <option value="200">200 ₽</option>
+            <option value="500">500 ₽</option>
+            <option value="1000">1000 ₽</option>
+        </select>
+        <button id="playBtn" onclick="startAttempt(false)">Играть на деньги</button>
+        <button id="trainBtn" onclick="startAttempt(true)">Тренировка (бесплатно)</button>
     </div>
+    <div id="field"></div>
     <div id="message"></div>
     <div id="result"></div>
 
@@ -33,16 +43,25 @@
         let currentStake = 100;
         let currentShot = 0;
         let attemptActive = false;
-        let clickResult = []; // массив результатов для отправки
-        let timer = null;
+        let clickResult = [];
+        let isTraining = false;
 
-        // Обновить баланс с сервера
         async function fetchBalance() {
             const resp = await fetch('/api/balance');
             const data = await resp.json();
             balance = data.balance;
             document.getElementById('bal').textContent = balance;
-            document.getElementById('playBtn').disabled = balance < 100;
+            updateButtons();
+        }
+
+        function updateButtons() {
+            const playBtn = document.getElementById('playBtn');
+            const trainBtn = document.getElementById('trainBtn');
+            const stakeSelect = document.getElementById('stakeSelect');
+            const disabled = attemptActive || balance < 100;
+            playBtn.disabled = disabled;
+            trainBtn.disabled = attemptActive;
+            stakeSelect.disabled = attemptActive;
         }
 
         async function deposit() {
@@ -54,23 +73,41 @@
             fetchBalance();
         }
 
-        async function startAttempt() {
-            if (balance < currentStake) return alert('Недостаточно средств');
-            const resp = await fetch('/api/attempt', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({stake: currentStake})
-            });
-            const data = await resp.json();
+        async function startAttempt(training = false) {
+            if (attemptActive) return;
+            isTraining = training;
+            currentStake = parseInt(document.getElementById('stakeSelect').value);
+
+            if (!training && balance < currentStake) {
+                alert('Недостаточно средств');
+                return;
+            }
+
+            let response;
+            if (training) {
+                response = await fetch('/api/training');
+            } else {
+                response = await fetch('/api/attempt', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({stake: currentStake})
+                });
+            }
+
+            const data = await response.json();
             if (data.error) {
                 alert(data.error);
                 return;
             }
+
             currentTrack = data.track;
-            balance = data.balance;
-            document.getElementById('bal').textContent = balance;
-            document.getElementById('playBtn').disabled = true;
+            if (!training) {
+                balance = data.balance;
+                document.getElementById('bal').textContent = balance;
+            }
+
             attemptActive = true;
+            updateButtons();
             currentShot = 0;
             clickResult = [];
             document.getElementById('message').textContent = '';
@@ -85,14 +122,11 @@
             }
             const shot = currentTrack[currentShot];
             const sector = shot.sector;
-            const promptTime = shot.prompt_time * 1000; // в миллисекундах
-            // Подсвечиваем сектор через promptTime и держим 300 мс
+            const promptTime = shot.prompt_time * 1000;
             setTimeout(() => {
                 if (!attemptActive) return;
                 highlightSector(sector);
-                // Запускаем таймер реакции: игрок должен кликнуть за 300 мс
                 const startTime = Date.now();
-                // Обработчик клика на поле
                 const field = document.getElementById('field');
                 const clickHandler = function(e) {
                     if (!attemptActive) return;
@@ -101,8 +135,6 @@
                     const y = e.clientY - rect.top;
                     const clickedSector = getSectorFromCoords(x, y, rect.width, rect.height);
                     const reactionTime = Date.now() - startTime;
-                    // Проверка
-                    const correct = clickedSector === sector && reactionTime >= 100;
                     clickResult.push({
                         sector_clicked: clickedSector,
                         reaction_time_ms: reactionTime,
@@ -111,14 +143,11 @@
                     clearHighlight();
                     field.removeEventListener('click', clickHandler);
                     currentShot++;
-                    // Задержка перед следующим ударом
                     setTimeout(startShot, 500);
                 };
                 field.addEventListener('click', clickHandler);
-                // Если не кликнул за 300 мс, автофиксация промаха
                 setTimeout(() => {
                     if (attemptActive && clickResult.length === currentShot) {
-                        // Не кликнули вовремя
                         clickResult.push({
                             sector_clicked: -1,
                             reaction_time_ms: 1000,
@@ -129,7 +158,7 @@
                         currentShot++;
                         setTimeout(startShot, 500);
                     }
-                }, 300);
+                }, REACTION_WINDOW_MS);
             }, promptTime);
         }
 
@@ -147,7 +176,6 @@
         }
 
         function getSectorFromCoords(x, y, width, height) {
-            // Сетка 3x3
             const col = Math.floor(x / (width / 3));
             const row = Math.floor(y / (height / 3));
             if (col < 0 || col > 2 || row < 0 || row > 2) return -1;
@@ -156,7 +184,15 @@
 
         async function endAttempt() {
             attemptActive = false;
-            // Отправляем результаты на сервер
+            updateButtons();
+
+            if (isTraining) {
+                const saved = clickResult.filter(r => r.sector_clicked === r.correct_sector && r.reaction_time_ms >= 100).length;
+                document.getElementById('message').textContent = `Тренировка: отбито ${saved}/5`;
+                document.getElementById('result').textContent = formatResult(clickResult);
+                return;
+            }
+
             const resp = await fetch('/api/submit_result', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -172,11 +208,19 @@
                 balance = data.balance;
                 document.getElementById('bal').textContent = balance;
                 document.getElementById('message').textContent = data.message;
+                document.getElementById('result').textContent = formatResult(clickResult);
             }
-            document.getElementById('playBtn').disabled = balance < 100;
         }
 
-        // Генерация поля с секторами
+        function formatResult(results) {
+            let text = 'Детали ударов:\n';
+            results.forEach((r, i) => {
+                const hit = r.sector_clicked === r.correct_sector && r.reaction_time_ms >= 100;
+                text += `Удар ${i+1}: ${hit ? '✅ Отбит' : '❌ Пропущен'} (сектор ${r.correct_sector}, реакция ${r.reaction_time_ms} мс)\n`;
+            });
+            return text;
+        }
+
         function createField() {
             const field = document.getElementById('field');
             const w = field.clientWidth / 3;
@@ -199,6 +243,9 @@
             createField();
             fetchBalance();
         };
+
+        // экспортируем константу для использования в setTimeout
+        const REACTION_WINDOW_MS = 400;
     </script>
 </body>
 </html>
